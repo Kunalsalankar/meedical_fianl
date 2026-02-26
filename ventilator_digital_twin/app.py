@@ -30,15 +30,24 @@ def _telemetry_gauges(latest: Dict[str, float]) -> None:
     c2.metric("PEEP (cmH2O)", f"{latest.get('peep_cmH2O', 0.0):.1f}")
     c2.metric("Tidal Volume (L)", f"{latest.get('tidal_volume_L', 0.0):.2f}")
 
-    c3.metric("Flow (L/s)", f"{latest.get('flow_Lps', 0.0):.2f}")
+    c3.metric(
+        "Inspiratory Flow (L/s)",
+        f"{latest.get('insp_flow_Lps_filt', latest.get('insp_flow_Lps', 0.0)):.2f}",
+        help=(
+            f"Cmd: {latest.get('insp_flow_cmd_Lps', latest.get('insp_flow_set_Lps', 0.0)):.2f} L/s | "
+            f"Max: {latest.get('insp_flow_max_Lps', 0.0):.2f} L/s"
+        ),
+    )
     c3.metric("RR (bpm)", f"{latest.get('rr_bpm', 0.0):.0f}")
 
     c4.metric("FiO2", f"{latest.get('fio2', 0.0):.2f}")
     c4.metric("Blower Speed (%)", f"{latest.get('blower_speed_pct', 0.0):.0f}")
 
+    c4.caption(f"Pressure target: {latest.get('pressure_target_cmH2O', 0.0):.1f} cmH2O")
+
     c5, c6, c7, c8 = st.columns(4)
     c5.metric("SpO2 (%)", f"{latest.get('spo2_pct', 0.0):.1f}")
-    c6.metric("EtCO2 (mmHg)", f"{latest.get('etco2_mmHg', 0.0):.1f}")
+    c6.metric("EtCO2 (mmHg)", f"{latest.get('etco2_mmHg_filt', latest.get('etco2_mmHg', 0.0)):.1f}")
     c7.metric("Leak (%)", f"{latest.get('leak_pct', 0.0):.1f}")
     c8.metric("Battery (%)", f"{latest.get('battery_pct', 0.0):.1f}")
 
@@ -111,23 +120,27 @@ def _trend_graphs(history: List[Dict[str, float]]) -> None:
     df = pd.DataFrame(history)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["time_s"], y=df["pip_cmH2O"], name="PIP (cmH2O)", mode="lines"))
-    fig.add_trace(go.Scatter(x=df["time_s"], y=df["plateau_cmH2O"], name="Plateau (cmH2O)", mode="lines"))
+    y_pip = df["pip_cmH2O_filt"] if "pip_cmH2O_filt" in df.columns else df["pip_cmH2O"]
+    y_plat = df["plateau_cmH2O_filt"] if "plateau_cmH2O_filt" in df.columns else df["plateau_cmH2O"]
+    fig.add_trace(go.Scatter(x=df["time_s"], y=y_pip, name="PIP (cmH2O)", mode="lines"))
+    fig.add_trace(go.Scatter(x=df["time_s"], y=y_plat, name="Plateau (cmH2O)", mode="lines"))
     fig.add_trace(go.Scatter(x=df["time_s"], y=df["peep_cmH2O"], name="PEEP (cmH2O)", mode="lines"))
     fig.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10), legend_orientation="h")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     fig2 = go.Figure()
     fig2.add_trace(go.Scatter(x=df["time_s"], y=df["tidal_volume_L"], name="VT (L)", mode="lines"))
-    fig2.add_trace(go.Scatter(x=df["time_s"], y=df["flow_Lps"], name="Flow (L/s)", mode="lines"))
+    y_flow = df["insp_flow_Lps_filt"] if "insp_flow_Lps_filt" in df.columns else (df["insp_flow_Lps"] if "insp_flow_Lps" in df.columns else df["flow_Lps"])
+    fig2.add_trace(go.Scatter(x=df["time_s"], y=y_flow, name="Inspiratory Flow (L/s)", mode="lines"))
     fig2.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10), legend_orientation="h")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
     fig3 = go.Figure()
     fig3.add_trace(go.Scatter(x=df["time_s"], y=df["spo2_pct"], name="SpO2 (%)", mode="lines"))
-    fig3.add_trace(go.Scatter(x=df["time_s"], y=df["etco2_mmHg"], name="EtCO2 (mmHg)", mode="lines"))
+    y_etco2 = df["etco2_mmHg_filt"] if "etco2_mmHg_filt" in df.columns else df["etco2_mmHg"]
+    fig3.add_trace(go.Scatter(x=df["time_s"], y=y_etco2, name="EtCO2 (mmHg)", mode="lines"))
     fig3.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10), legend_orientation="h")
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig3, width="stretch")
 
 
 def main() -> None:

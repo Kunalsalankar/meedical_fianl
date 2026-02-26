@@ -108,6 +108,8 @@ class VentilatorModel:
             "peep_cmH2O": float(self._settings.peep_cmH2O),
             "tidal_volume_L": self._state.tidal_volume_L,
             "flow_Lps": float(lung_out["flow_Lps"]),
+            "insp_flow_set_Lps": float(max(0.0, self._settings.inspiratory_flow_Lps)),
+            "insp_flow_Lps": float(max(0.0, lung_out["flow_Lps"])),
             "rr_bpm": float(self._settings.respiratory_rate_bpm),
             "fio2": float(clamp(self._settings.fio2, 0.21, 1.0)),
             "blower_speed_pct": float(clamp(self._settings.blower_speed_pct, 0.0, 100.0)),

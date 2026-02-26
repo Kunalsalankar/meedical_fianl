@@ -67,6 +67,8 @@ class ScenarioEngine:
         self._telemetry_history: List[Dict[str, float]] = []
         self._latest: Dict[str, float] = {}
         self._battery_pct = 100.0
+        self._filters: Dict[str, float] = {}
+        self._control_info: Dict[str, float] = {}
 
         self._process = self._env.process(self._run())
 
@@ -106,9 +108,28 @@ class ScenarioEngine:
 
         # Settings
         s = self._vent.settings
+
+        # Pressure-target control proxy:
+        # Compute an inspiratory flow command to track the selected airway pressure target.
+        # Flow is limited by the inspiratory flow slider (treated as max flow capability).
+        max_insp_flow = float(max(0.05, c.inspiratory_flow_Lps))
+        target_p = float(max(0.0, c.airway_pressure_target_cmH2O))
+        lp2 = self._lung.params
+        v = float(self._lung.volume_L)
+        comp = float(max(1e-6, lp2.compliance_L_per_cmH2O))
+        res = float(max(1e-6, lp2.resistance_cmH2O_per_Lps))
+        elastic_p = (v / comp) + float(s.peep_cmH2O)
+        flow_needed = (target_p - elastic_p) / res
+        insp_flow_cmd = float(clamp(flow_needed, 0.0, max_insp_flow))
+
+        self._control_info = {
+            "pressure_target_cmH2O": target_p,
+            "insp_flow_max_Lps": max_insp_flow,
+            "insp_flow_cmd_Lps": insp_flow_cmd,
+        }
         self._vent.set_settings(
             VentilatorSettings(
-                inspiratory_flow_Lps=float(max(0.05, c.inspiratory_flow_Lps)),
+                inspiratory_flow_Lps=insp_flow_cmd,
                 respiratory_rate_bpm=float(clamp(c.respiratory_rate_bpm, 6.0, 40.0)),
                 fio2=float(clamp(c.fio2, 0.21, 1.0)),
                 peep_cmH2O=float(clamp(s.peep_cmH2O, 0.0, 20.0)),
@@ -144,6 +165,18 @@ class ScenarioEngine:
             measured = self._fault_engine.apply_sensor_effects(telemetry, fctrl)
             measured = self._fault_engine.derive_gases(measured, fctrl, self._patient)
 
+            # Low-pass filter select signals for display stability.
+            pip_f = self._lpf("pip_cmH2O", float(measured.get("pip_cmH2O", 0.0)), tau_s=1.2)
+            plateau_f = self._lpf("plateau_cmH2O", float(measured.get("plateau_cmH2O", 0.0)), tau_s=1.5)
+            flow_f = self._lpf("flow_Lps", float(measured.get("flow_Lps", 0.0)), tau_s=0.8)
+            insp_flow_f = self._lpf("insp_flow_Lps", float(measured.get("insp_flow_Lps", 0.0)), tau_s=0.8)
+            etco2_f = self._lpf("etco2_mmHg", float(measured.get("etco2_mmHg", 40.0)), tau_s=3.0)
+            measured["pip_cmH2O_filt"] = pip_f
+            measured["plateau_cmH2O_filt"] = plateau_f
+            measured["flow_Lps_filt"] = flow_f
+            measured["insp_flow_Lps_filt"] = insp_flow_f
+            measured["etco2_mmHg_filt"] = etco2_f
+
             alarms = self._fault_engine.compute_alarms(measured)
 
             # Add alarm booleans into history for temporal validation
@@ -174,6 +207,7 @@ class ScenarioEngine:
 
             self._latest = {
                 **measured,
+                **self._control_info,
                 "severity_score": float(score),
                 "severity_level": str(level),
                 "fault_class": fault.get("fault_class", "normal"),
@@ -187,3 +221,15 @@ class ScenarioEngine:
             }
 
             yield self._env.timeout(self._dt_s)
+
+    def _lpf(self, key: str, x: float, tau_s: float) -> float:
+        """First-order low-pass filter: y += alpha*(x-y), alpha=dt/(tau+dt)."""
+        tau_s = float(max(1e-3, tau_s))
+        alpha = float(self._dt_s / (tau_s + self._dt_s))
+        if key not in self._filters:
+            self._filters[key] = float(x)
+            return float(x)
+        y = float(self._filters[key])
+        y = y + alpha * (float(x) - y)
+        self._filters[key] = y
+        return y
